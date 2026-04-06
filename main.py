@@ -1,5 +1,5 @@
 """
-LocalLensTranslator v5 - LM Studio 専用版
+LocalLensTranslator v2.62 
 主な修正:
   - RegionSelector がスクリーン絶対座標を正しく返すよう修正
   - OCR が使えない場合に明確なエラーメッセージを表示
@@ -95,17 +95,37 @@ def save_settings(s: dict):
 # ─────────────────────────────────────────────
 
 def extract_dominant_colors(image) -> tuple[str, str]:
-    small = image.resize((60, 60)).convert("RGB")
+    small = image.resize((80, 80)).convert("RGB")
     pixels = list(small.getdata())
 
     def lum(p):
         return 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2]
 
-    luminances = [lum(p) for p in pixels]
-    avg_lum = sum(luminances) / len(luminances)
-    bright = [pixels[i] for i, l in enumerate(luminances) if l >= avg_lum]
-    dark   = [pixels[i] for i, l in enumerate(luminances) if l <  avg_lum]
+    def saturation(p):
+        r, g, b = p[0]/255, p[1]/255, p[2]/255
+        return max(r, g, b) - min(r, g, b)
 
+    # 輝度でソートして上位20%を文字候補、下位20%を背景候補として取る
+    # （背景は大多数を占め、文字は少数の特徴的な色）
+    luminances = [(lum(p), p) for p in pixels]
+    luminances.sort(key=lambda x: x[0])
+
+    n = len(luminances)
+    dark_pixels  = [p for _, p in luminances[:n//5]]   # 暗い方20%
+    bright_pixels = [p for _, p in luminances[n*4//5:]] # 明るい方20%
+
+    def median_color(lst):
+        if not lst:
+            return (128, 128, 128)
+        lst_s = sorted(lst, key=lambda p: p[0]*299 + p[1]*587 + p[2]*114)
+        return lst_s[len(lst_s)//2]
+
+    dark_color  = median_color(dark_pixels)
+    bright_color = median_color(bright_pixels)
+
+    # 輝度差が大きい方を fg/bg に割り当てる
+    # 背景は広い面積 = 中間輝度帯に多い
+    mid_pixels = [p for _, p in luminances[n//5:n*4//5]]
     def avg_color(lst):
         if not lst:
             return (128, 128, 128)
@@ -113,15 +133,30 @@ def extract_dominant_colors(image) -> tuple[str, str]:
                 sum(p[1] for p in lst)//len(lst),
                 sum(p[2] for p in lst)//len(lst))
 
-    bc, dc = avg_color(bright), avg_color(dark)
-    if len(bright) >= len(dark):
-        bg_rgb, fg_rgb = bc, dc
+    bg_rgb  = avg_color(mid_pixels) if mid_pixels else bright_color
+    # 文字色は背景と輝度差が大きい方（暗いか明るいか）を選ぶ
+    if abs(lum(dark_color) - lum(bg_rgb)) >= abs(lum(bright_color) - lum(bg_rgb)):
+        fg_rgb = dark_color
     else:
-        bg_rgb, fg_rgb = dc, bc
+        fg_rgb = bright_color
 
-    if abs(lum(bg_rgb) - lum(fg_rgb)) < 80:
+    # 彩度が低い場合のみコントラスト補正（色付き文字は補正しない）
+    if abs(lum(bg_rgb) - lum(fg_rgb)) < 80 and saturation(fg_rgb) < 0.3:
         fg_rgb = (20, 20, 20) if lum(bg_rgb) > 128 else (235, 235, 235)
-
+    # 文字色のコントラストを強調する
+    # HSVに変換して明度(V)と彩度(S)を調整する
+    import colorsys
+    r, g, b = fg_rgb[0]/255, fg_rgb[1]/255, fg_rgb[2]/255
+    h, s, v = colorsys.rgb_to_hsv(r, g, b)
+    if lum(fg_rgb) < lum(bg_rgb):
+        v = max(0.0, v * 0.8)
+        s = min(1.0, s * 1.8)   # 彩度を上げて鮮やかにする
+    else:
+        v = min(1.0, v * 1.6)
+        s = min(1.0, s * 1.4)   # 彩度を上げて鮮やかにする
+    r2, g2, b2 = colorsys.hsv_to_rgb(h, s, v)
+    fg_rgb = (int(r2 * 255), int(g2 * 255), int(b2 * 255))
+                  
     return ("#{:02X}{:02X}{:02X}".format(*bg_rgb),
             "#{:02X}{:02X}{:02X}".format(*fg_rgb))
 
@@ -638,9 +673,30 @@ class RegionOverlay(tk.Toplevel):
         base_fs = int(self._settings.get("font_size", 13))
         wrap_w  = max(10, self.win_w - 8)
 
-        # base_fs から始めて実際に描画し、枠に収まるまで縮小する
+        # まず base_fs で描画して高さを確認し、
+        # 余裕があれば拡大、はみ出していれば縮小する
         fs = base_fs
         tid = None
+
+        # 1回目の描画で余裕を確認して拡大を試みる
+        if tid is not None:
+            c.delete(tid)
+        tid = c.create_text(
+            4, 4, text=self._text, fill=self._fg,
+            font=(ff, fs), anchor="nw", width=wrap_w,
+        )
+        c.update_idletasks()
+        bbox = c.bbox(tid)
+        if bbox is not None:
+            text_h = bbox[3] - bbox[1]
+            avail_h = self.win_h - 8
+            if text_h < avail_h * 0.6:
+                # 余裕が40%以上あれば拡大を試みる（上限は base_fs * 3）
+                ratio = (avail_h / text_h) ** 0.5
+                fs = min(int(base_fs * 3), int(fs * ratio))
+                c.delete(tid)
+                tid = None
+
         for _ in range(10):
             if tid is not None:
                 c.delete(tid)
