@@ -1,6 +1,7 @@
 # LocalLensTranslator
 
-LM Studio（ローカルLLM）を使って、画面上の任意の範囲をOCRで読み取りリアルタイム翻訳するWindowsデスクトップツールです。
+ローカルLLM を使って画面上の任意の複数範囲をOCRで読み取り、  
+リアルタイム翻訳をオーバーレイするWindowsデスクトップツールです。
 
 ---
 
