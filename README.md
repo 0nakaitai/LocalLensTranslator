@@ -1,4 +1,4 @@
-# ScreenTranslator
+# LocalLensTranslator
 
 LM Studio（ローカルLLM）を使って、画面上の任意の範囲をOCRで読み取りリアルタイム翻訳するWindowsデスクトップツールです。
 
@@ -43,7 +43,7 @@ python main.py
 ## 基本的な使い方
 
 1. LM Studio を起動し、ローカルサーバーをONにする
-2. ScreenTranslator を起動する
+2. LocalLensTranslator を起動する
 3. **⚙設定** からLM StudioのエンドポイントURLとモデルを設定して保存する
 4. **＋ 枠を追加** ボタンを押し、翻訳したい画面範囲をドラッグで選択する
 5. 自動的にOCR→翻訳が実行され、選択した範囲に翻訳結果が重なって表示される
@@ -162,7 +162,7 @@ Use polite Japanese (丁寧語) for the translation.
 ## 設定の保存先
 
 ```
-%APPDATA%\ScreenTranslator\settings.json
+%APPDATA%\LocalLensTranslator\settings.json
 ```
 
 ---
