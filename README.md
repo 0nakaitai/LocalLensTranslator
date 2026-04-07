@@ -198,4 +198,4 @@ Use polite Japanese (丁寧語) for the translation.
 - 翻訳元言語の言語パックはWindowsの⚙設定→時刻と言語→言語と地域から個別に追加ダウンロードする必要があります。
 - LM Studio のサーバーが起動していない場合は翻訳エラーになります。
 - ：に反応するのは補正辞書に :=  を追加すると反応しなくなるかも。  
-<img width="256" height="256" alt="Image" src="https://github.com/user-attachments/assets/dea392aa-45f4-499e-aca3-e48794749787" />使わなかったアイコン
+<img width="256" height="256" alt="Image" src="https://github.com/user-attachments/assets/dea392aa-45f4-499e-aca3-e48794749787" />使わなかったアイコン<img width="256" height="256" alt="Image" src="https://github.com/user-attachments/assets/f2c44906-3b3d-4dc3-878b-2ace06516d0a" />
