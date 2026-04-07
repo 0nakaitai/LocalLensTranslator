@@ -1,10 +1,7 @@
 """
-LocalLensTranslator v2.62 
+LocalLensTranslator v2.70 
 主な修正:
-  - RegionSelector がスクリーン絶対座標を正しく返すよう修正
-  - OCR が使えない場合に明確なエラーメッセージを表示
-  - 翻訳エラーをオーバーレイに表示してデバッグしやすくする
-  - オーバーレイは選択枠と同座標に重なる（タイトルバーなし）
+  - アイコンの追加
 """
 
 import os
@@ -16,6 +13,16 @@ from tkinter import font as tkfont
 import urllib.request
 import urllib.error
 import re
+import sys  # ← これを追加
+
+def resource_path(relative_path):
+    """ PyInstallerの一時フォルダ、または通常のパスからファイルを探す """
+    try:
+        # PyInstallerで実行されている場合、_MEIPASSにパスが入る
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
 
 # ─────────────────────────────────────────────
 # 設定
@@ -1304,6 +1311,15 @@ class LocalLensTranslatorApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("LocalLensTranslator")
+        # --- アイコン設定 (ここを追加) ---
+        try:
+            # 前の工程で作った resource_path 関数を使ってパスを取得
+            icon_p = resource_path("icon.ico")
+            self.iconbitmap(icon_p)
+        except Exception:
+            # アイコンがなくても起動だけはできるようにエラーをスルー
+            pass
+        # --------------------------------
         self.resizable(False, False)
         self.configure(bg="#0D1117")
         self._settings = load_settings()
