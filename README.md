@@ -3,7 +3,7 @@
 画面上の任意の**複数**範囲をOCRで読み取り、  
 ローカルLLMを使ってリアルタイム翻訳を**オーバーレイ**するWindowsデスクトップツールです。
 
-<img width="256" height="256" alt="Image" src="https://github.com/user-attachments/assets/c7c8d529-785f-4685-b616-f564716a538f" />
+<img width="256" height="256" alt="Image" src="https://github.com/user-attachments/assets/e2994e7a-b7c6-4292-94f6-5120fcfff2bd" />
 <img width="564" height="395" alt="Image" src="https://github.com/user-attachments/assets/59e5217f-aa00-48b6-b16b-51f284693054" />
 
 
@@ -23,7 +23,7 @@
 4070ti 12GB で短文は2秒未満（3sentence）長文は4秒未満（10sentence）でした。  
 ゲーム用途ではほぼ2秒未満で翻訳されると思います。  
 翻訳精度はGemma4の方がいい気がするので、ゲーム用途ならGemma4-E2BのQ6_Kが軽くて早いのでおすすめです。  
-：に反応して突然喋りだすことがあるので注意してください。ｺﾜｲ
+：に反応して突然喋りだすことがあるので注意してください。ｺﾜｲ（修正済み）
 
 ---
 
@@ -198,4 +198,4 @@ Use polite Japanese (丁寧語) for the translation.
 - 翻訳元言語の言語パックはWindowsの⚙設定→時刻と言語→言語と地域から個別に追加ダウンロードする必要があります。
 - LM Studio のサーバーが起動していない場合は翻訳エラーになります。
 - ：に反応するのは補正辞書に :=  を追加すると反応しなくなるかも。  
-<img width="256" height="256" alt="Image" src="https://github.com/user-attachments/assets/dea392aa-45f4-499e-aca3-e48794749787" />使わなかったアイコン<img width="256" height="256" alt="Image" src="https://github.com/user-attachments/assets/f2c44906-3b3d-4dc3-878b-2ace06516d0a" />
+<img width="256" height="256" alt="Image" src="https://github.com/user-attachments/assets/c7c8d529-785f-4685-b616-f564716a538f" /><img width="256" height="256" alt="Image" src="https://github.com/user-attachments/assets/dea392aa-45f4-499e-aca3-e48794749787" />使わなかったアイコン<img width="256" height="256" alt="Image" src="https://github.com/user-attachments/assets/f2c44906-3b3d-4dc3-878b-2ace06516d0a" />
