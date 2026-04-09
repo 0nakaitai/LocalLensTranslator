@@ -3,6 +3,10 @@
 画面上の任意の**複数**範囲をOCRで読み取り、  
 ローカルLLMを使ってリアルタイム翻訳を**オーバーレイ**するWindowsデスクトップツールです。
 
+<img width="256" height="256" alt="Image" src="https://github.com/user-attachments/assets/c7c8d529-785f-4685-b616-f564716a538f" />
+<img width="564" height="395" alt="Image" src="https://github.com/user-attachments/assets/59e5217f-aa00-48b6-b16b-51f284693054" />
+
+
 ---
 
 ## 必要環境
@@ -23,8 +27,9 @@
 
 ---
 
-## インストール
+## インストール**⚠️exeファイルを用意したのでReleaseからDLしてください⚠️**
 
+▼exeファイルなんて使わねーぜって人用▼
 ```bash
 pip install mss Pillow winsdk
 ```
@@ -192,4 +197,5 @@ Use polite Japanese (丁寧語) for the translation.
 - Windows OCR は `pip install winsdk` で使用可能になります。未インストールの場合は Tesseract にフォールバックします。
 - 翻訳元言語の言語パックはWindowsの⚙設定→時刻と言語→言語と地域から個別に追加ダウンロードする必要があります。
 - LM Studio のサーバーが起動していない場合は翻訳エラーになります。
-- ：に反応するのは補正辞書に :=  を追加すると反応しなくなるかも。
+- ：に反応するのは補正辞書に :=  を追加すると反応しなくなるかも。  
+<img width="256" height="256" alt="Image" src="https://github.com/user-attachments/assets/dea392aa-45f4-499e-aca3-e48794749787" />使わなかったアイコン<img width="256" height="256" alt="Image" src="https://github.com/user-attachments/assets/f2c44906-3b3d-4dc3-878b-2ace06516d0a" />
