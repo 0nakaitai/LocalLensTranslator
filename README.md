@@ -12,7 +12,7 @@
 ローカルLLMを使ってリアルタイム翻訳を**オーバーレイ**するWindowsデスクトップツールです。
 
 <img width="256" height="256" alt="Image" src="https://github.com/user-attachments/assets/e2994e7a-b7c6-4292-94f6-5120fcfff2bd" />
-<img width="565" height="393" alt="Image" src="https://github.com/user-attachments/assets/ee2e47e5-22d4-4d61-8bd8-44e39d0c0fe7" />
+<img width="565" height="394" alt="Image" src="https://github.com/user-attachments/assets/b82e4180-b1e3-4387-8017-0a0aa1bfa958" />
 
 
 ---
@@ -112,7 +112,7 @@ python main.py
 | 英語 | 英語をOCRで読み取り日本語に翻訳する |
 | 中国語 | 中国語をOCRで読み取り日本語に翻訳する |
 | 韓国語 | 韓国語をOCRで読み取り日本語に翻訳する |
-| カスタム | 選択した言語をOCRで読み取り選択した言語に翻訳する<br><img width="341" height="504" alt="Image" src="https://github.com/user-attachments/assets/f855c725-a57e-403d-8736-396785015aea" /> |  
+| カスタム | 選択した言語をOCRで読み取り選択した言語に翻訳する<br><img width="343" height="502" alt="Image" src="https://github.com/user-attachments/assets/ad1f0679-951e-413a-863c-992c023aa8c3" /> |  
 
 日→英は海外のフォーラムやチャットでの利用を想定して開発しました。  
 （相手のチャットを翻訳しつつ、自分が日本語で書いた文を翻訳してそのままペーストする感じです。）
