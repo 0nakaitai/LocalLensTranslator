@@ -11,7 +11,7 @@
 A Windows desktop tool that reads multiple screen regions via OCR and displays real-time translations as overlays using a local LLM.
 
 <img width="256" height="256" alt="Image" src="https://github.com/user-attachments/assets/e2994e7a-b7c6-4292-94f6-5120fcfff2bd" />
-<img width="565" height="393" alt="Image" src="https://github.com/user-attachments/assets/ee2e47e5-22d4-4d61-8bd8-44e39d0c0fe7" />
+<img width="565" height="394" alt="Image" src="https://github.com/user-attachments/assets/b82e4180-b1e3-4387-8017-0a0aa1bfa958" />
 
 ---
 
@@ -112,7 +112,7 @@ python main.py
 | English | Reads English via OCR and translates to Japanese |
 | Chinese | Reads Chinese via OCR and translates to Japanese |
 | Korean | Reads Korean via OCR and translates to Japanese |
-| Custom | Performs OCR on the selected language and translates it into your chosen target language.<br><img width="341" height="504" alt="Image" src="https://github.com/user-attachments/assets/f855c725-a57e-403d-8736-396785015aea" /> |  
+| Custom | Performs OCR on the selected language and translates it into your chosen target language.<br><img width="343" height="502" alt="Image" src="https://github.com/user-attachments/assets/ad1f0679-951e-413a-863c-992c023aa8c3" /> |  
 
 The JA→EN mode is designed for use in overseas forums and chats —  
 translate what others write, then type your reply in Japanese and paste the translation directly.
