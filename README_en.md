@@ -1,9 +1,17 @@
 # LocalLensTranslator
+<table>
+	<thead>
+		<tr>
+			<th style="text-align:center"><a href="README.md">日本語</a></th>
+			<th style="text-align:center">English</th>
+		</tr>
+	</thead>
+</table>
 
 A Windows desktop tool that reads multiple screen regions via OCR and displays real-time translations as overlays using a local LLM.
 
 <img width="256" height="256" alt="Image" src="https://github.com/user-attachments/assets/e2994e7a-b7c6-4292-94f6-5120fcfff2bd" />
-<img width="564" height="395" alt="Image" src="https://github.com/user-attachments/assets/59e5217f-aa00-48b6-b16b-51f284693054" />
+<img width="565" height="393" alt="Image" src="https://github.com/user-attachments/assets/ee2e47e5-22d4-4d61-8bd8-44e39d0c0fe7" />
 
 ---
 
@@ -83,7 +91,7 @@ python main.py
 | Region List | Shows the coordinates and status of all translation regions |
 | OCR Correction Dictionary | Enter correction rules for common OCR misreads |
 | Borderless Mode | Force the active game window into borderless fullscreen |
-| Source Language Toggle | Switch the source language (JA→EN / English / Chinese / Korean) |
+| Source Language Toggle | Switch the source language (JA→EN / English / Chinese / Korean / Custom) |
 
 ※ Dot Optimize may or may not improve accuracy depending on the font.
 
@@ -104,6 +112,7 @@ python main.py
 | English | Reads English via OCR and translates to Japanese |
 | Chinese | Reads Chinese via OCR and translates to Japanese |
 | Korean | Reads Korean via OCR and translates to Japanese |
+| Custom | Performs OCR on the selected language and translates it into your chosen target language.<br><img width="341" height="504" alt="Image" src="https://github.com/user-attachments/assets/f855c725-a57e-403d-8736-396785015aea" /> |  
 
 The JA→EN mode is designed for use in overseas forums and chats —  
 translate what others write, then type your reply in Japanese and paste the translation directly.
@@ -172,10 +181,10 @@ Forces a game window into borderless fullscreen — useful for games that only s
 
 | Key | Action |
 |-----|--------|
-| `Ctrl+Shift+T` | Toggle translation ON/OFF |
-| `Ctrl+Shift+A` | Add a new translation region |
-| `Ctrl+Shift+R` | Retranslate all regions |
-| `Ctrl+Shift+C` | Clear all regions |
+| `Ctrl+Shift+A` | ＋ Add a new translation region |
+| `Ctrl+Shift+R` | ▶ Retranslate all regions |
+| `Ctrl+Shift+T` |⏸ Toggle translation ON/OFF |
+| `Ctrl+Shift+C` | ✕ Clear all regions |
 
 Shortcuts can be changed in the settings dialog.
 
