@@ -67,15 +67,15 @@ SOURCE_LANGS = [
 
 # カスタム翻訳で選べる言語一覧（コード: 表示名）
 CUSTOM_LANGS = {
-    "ja":  "日本語",
-    "en":  "英語",
-    "zh":  "中国語",
-    "ko":  "韓国語",
-    "fr":  "フランス語",
-    "de":  "ドイツ語",
-    "es":  "スペイン語",
-    "ru":  "ロシア語",
-    "pt":  "ポルトガル語",
+    "ja":  "日本語（JA）",
+    "en":  "英語（EN）",
+    "zh":  "中国語（ZH）",
+    "ko":  "韓国語（KO）",
+    "fr":  "フランス語（FR）",
+    "de":  "ドイツ語（DE）",
+    "es":  "スペイン語（ES）",
+    "ru":  "ロシア語（RU）",
+    "pt":  "ポルトガル語（PT）",
 }
 
 # カスタム翻訳用システムプロンプト生成
@@ -1424,7 +1424,7 @@ class LocalLensTranslatorApp(tk.Tk):
         # 3. 【追加】ドット最適化チェックボックス（インジケーターの右側）
         self._pixel_var = tk.BooleanVar(value=self._settings.get("pixel_font_mode", False))
         cb = tk.Checkbutton(
-            hdr, text="ドット最適化", variable=self._pixel_var,
+            hdr, text="Dot最適化", variable=self._pixel_var,
             command=self._on_pixel_mode_changed,
             bg="#161B22", fg="#8B949E", selectcolor="#161B22",
             activebackground="#161B22", activeforeground="#58A6FF",
@@ -1581,7 +1581,7 @@ class LocalLensTranslatorApp(tk.Tk):
         # カスタム翻訳ボタン
         is_custom = (self._lang_var.get() == "custom")
         b = tk.Button(
-            lang_frame, text="カスタム",
+            lang_frame, text="Custom",
             bg="#1F6FEB" if is_custom else "#21262D",
             fg="#FFFFFF" if is_custom else "#8B949E",
             relief="flat", font=("Yu Gothic UI", 9),
