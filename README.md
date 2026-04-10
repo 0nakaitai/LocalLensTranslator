@@ -1,10 +1,18 @@
 # LocalLensTranslator
+<table>
+	<thead>
+    	<tr>
+      		<th style="text-align:center">日本語</th>
+      		<th style="text-align:center"><a href="README_en.md">English</a></th>
+    	</tr>
+  	</thead>
+</table>
 
 画面上の任意の**複数**範囲をOCRで読み取り、  
 ローカルLLMを使ってリアルタイム翻訳を**オーバーレイ**するWindowsデスクトップツールです。
 
 <img width="256" height="256" alt="Image" src="https://github.com/user-attachments/assets/e2994e7a-b7c6-4292-94f6-5120fcfff2bd" />
-<img width="564" height="395" alt="Image" src="https://github.com/user-attachments/assets/59e5217f-aa00-48b6-b16b-51f284693054" />
+<img width="565" height="393" alt="Image" src="https://github.com/user-attachments/assets/ee2e47e5-22d4-4d61-8bd8-44e39d0c0fe7" />
 
 
 ---
@@ -83,7 +91,7 @@ python main.py
 | 翻訳枠一覧 | 現在の翻訳枠の座標と状態の一覧 |
 | OCR補正辞書 | OCR誤認識を補正するルールを記述する欄 |
 | 対象をボーダーレス化 | アクティブなゲームウィンドウをボーダーレス全画面にする |
-| 翻訳元トグル | 翻訳元の言語を切り替える（日→英 / 英語 / 中国語 / 韓国語） |  
+| 翻訳元トグル | 翻訳元の言語を切り替える（日→英 / 英語 / 中国語 / 韓国語 / カスタム） |  
 
 ※ドット最適化はピクセルフォントの読み取り精度が向上したりしなかったりします。
 
@@ -104,6 +112,7 @@ python main.py
 | 英語 | 英語をOCRで読み取り日本語に翻訳する |
 | 中国語 | 中国語をOCRで読み取り日本語に翻訳する |
 | 韓国語 | 韓国語をOCRで読み取り日本語に翻訳する |
+| カスタム | 選択した言語をOCRで読み取り選択した言語に翻訳する<br><img width="341" height="504" alt="Image" src="https://github.com/user-attachments/assets/f855c725-a57e-403d-8736-396785015aea" /> |  
 
 日→英は海外のフォーラムやチャットでの利用を想定して開発しました。  
 （相手のチャットを翻訳しつつ、自分が日本語で書いた文を翻訳してそのままペーストする感じです。）
@@ -174,10 +183,10 @@ Use polite Japanese (丁寧語) for the translation.
 
 | キー | 動作 |
 |------|------|
-| `Ctrl+Shift+T` | 翻訳 ON/OFF |
-| `Ctrl+Shift+A` | 翻訳枠を追加 |
-| `Ctrl+Shift+R` | 全枠を再翻訳 |
-| `Ctrl+Shift+C` | 全枠をクリア |
+| `Ctrl+Shift+A` | ＋ 枠を追加 |
+| `Ctrl+Shift+R` | ▶ 全枠翻訳 |
+| `Ctrl+Shift+T` | ⏸ ON/OFF |
+| `Ctrl+Shift+C` | ✕ 全枠クリア |
 
 設定ダイアログから変更できます。
 
