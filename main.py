@@ -243,19 +243,41 @@ def ocr_image(image, settings) -> str:
     ocr_cfg = LANG_OCR.get(lang, LANG_OCR["en"])
 
     def preprocess_for_ocr(img):
-        img = img.convert("L")
+        from PIL import ImageEnhance
+        import numpy as np
+
+        # RGB各チャンネルを個別に強調してから最大値で合成する
+        # これにより赤・緑・青・ピンク・紫など全ての色が背景と区別しやすくなる
+        arr = np.array(img.convert("RGB"), dtype=np.float32)
+        r, g, b = arr[:,:,0], arr[:,:,1], arr[:,:,2]
+
+        # 各チャンネルを0-255に正規化して最大値を取る
+        def normalize(ch):
+            mn, mx = ch.min(), ch.max()
+            if mx - mn < 1:
+                return ch
+            return (ch - mn) / (mx - mn) * 255
+
+        # 背景(黒)との差が最大のチャンネルを強調
+        # 各ピクセルで最も明るいチャンネルを使う
+        combined = np.maximum(np.maximum(normalize(r), normalize(g)), normalize(b))
+        from PIL import Image as PILImage
+        img = PILImage.fromarray(combined.astype(np.uint8), mode="L")
+
         if settings.get("pixel_font_mode", False):
             w, h = img.size
             img = img.resize((w * 4, h * 4), Image.Resampling.NEAREST)
             img = ImageOps.autocontrast(img, cutoff=2)
             img = img.filter(ImageFilter.EDGE_ENHANCE_MORE)
-            threshold = 128 
+            threshold = 128
             img = img.point(lambda x: 0 if x < threshold else 255, '1')
         else:
             w, h = img.size
             img = img.resize((w * 2, h * 2), Image.Resampling.LANCZOS)
             img = ImageOps.autocontrast(img)
             img = img.filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=3))
+        # ▼デバッグ用：OCRエンジンが実際に何を見ているか確認する（超おすすめ）
+        # img.save("debug_ocr.png")
         return img
 
     image = preprocess_for_ocr(image)
@@ -661,6 +683,9 @@ def _insert_linebreaks(text: str) -> str:
 
     # 7. 3つ以上連続する改行は2つ（空行1行分）にまとめる
     result = re.sub(r'\n{3,}', '\n\n', result)
+    
+    # 「」内の改行をすべて除去（[^」]は改行にマッチしないので re.DOTALLを使う）
+    result = re.sub(r'「(.*?)」', lambda m: '「' + m.group(1).replace('\n', '') + '」', result, flags=re.DOTALL)
 
     return result.strip()
 
