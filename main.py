@@ -55,6 +55,7 @@ DEFAULT_SETTINGS = {
     "use_prompt":          True,       # 翻訳プロンプトを使用するか
     "custom_src":          "en",    # カスタム翻訳の翻訳元
     "custom_tgt":          "ja",    # カスタム翻訳の翻訳先
+    "use_oneocr":          False,   # OneOCR を使用するか（隠し機能）
 }
 
 # 翻訳元言語の定義
@@ -234,8 +235,24 @@ def ocr_image(image, settings) -> str:
     """
     OCRを実行してテキストを返す。
     settings["source_lang"] に応じて認識言語を切り替える。
+    settings["use_oneocr"] が True のとき OneOCR を優先し、失敗時は Windows OCR にフォールバック。
     """
     from PIL import Image, ImageOps, ImageFilter
+
+    # OneOCR モード: テキストのみ返す（位置情報は ocr_image_with_boxes で取得）
+    if settings.get("use_oneocr", False):
+        try:
+            lines = _ocr_oneocr(image, settings)
+            if lines:
+                text = "\n".join(l["text"] for l in lines).strip()
+                if text:
+                    print(f"【OneOCR 行数】: {len(lines)}")
+                    return text
+        except (ImportError, FileNotFoundError) as e:
+            print(f"【OneOCR セットアップエラー】:\n{e}")
+        except Exception as e:
+            print(f"【OneOCR エラー】: {e}")
+        # OneOCR 失敗時は Windows OCR にフォールバック
 
     lang = settings.get("source_lang", "en")
     if lang == "custom":
@@ -280,6 +297,7 @@ def ocr_image(image, settings) -> str:
         # img.save("debug_ocr.png")
         return img
 
+    # OneOCR 成功時はここに到達しないので、前処理はフォールバック時のみ実行
     image = preprocess_for_ocr(image)
 
     errors = []
@@ -374,6 +392,88 @@ def _ocr_windows(image, lang: str | None = None) -> str:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     return loop.run_until_complete(_run())
+
+
+def _ocr_oneocr(image, settings) -> list[dict]:
+    """
+    OneOCR (Windows 11 Snipping Tool の OCR エンジン) を使ってテキスト認識する。
+    行ごとのテキストとバウンディングボックスを返す。
+    戻り値: [{"text": str, "y": float, "h": float}, ...]
+      y, h は元画像の高さに対する相対値 (0.0〜1.0)
+    必要ファイル: oneocr.dll / oneocr.onemodel / onnxruntime.dll
+    (Snipping Tool から取り出して main.py と同じフォルダに配置)
+    """
+    try:
+        import oneocr
+    except ImportError:
+        raise ImportError(
+            "OneOCR を使用するには 'pip install oneocr' が必要です。\n"
+            "コマンドプロンプトで以下を実行してください:\n"
+            "  pip install oneocr"
+        )
+
+    # 必要なDLLファイルの存在確認
+    import pathlib
+    oneocr_dir = pathlib.Path.home() / ".config" / "oneocr"
+    required_files = ["oneocr.dll", "oneocr.onemodel", "onnxruntime.dll"]
+    missing = [f for f in required_files if not (oneocr_dir / f).exists()]
+    if missing:
+        raise FileNotFoundError(
+            f"OneOCR に必要なファイルが見つかりません。\n"
+            f"不足ファイル: {', '.join(missing)}\n\n"
+            f"以下の手順で配置してください:\n"
+            f"1. PowerShell で以下を実行して Snipping Tool のフォルダを確認:\n"
+            f"   Get-AppxPackage Microsoft.ScreenSketch | Select-Object InstallLocation\n"
+            f"2. 表示されたフォルダの SnippingTool フォルダから\n"
+            f"   以下の3ファイルをコピーしてください:\n"
+            f"   コピー先: {oneocr_dir}\n"
+            f"   コピーするファイル:\n"
+            f"     - oneocr.dll\n"
+            f"     - oneocr.onemodel\n"
+            f"     - onnxruntime.dll"
+        )
+
+    img_w, img_h = image.size
+
+    # OcrEngine はコストが高いのでモジュールレベルでキャッシュする
+    if not hasattr(_ocr_oneocr, "_engine"):
+        _ocr_oneocr._engine = oneocr.OcrEngine()
+
+    engine = _ocr_oneocr._engine
+    result = engine.recognize_pil(image.convert("RGB"))
+
+    lines = []
+    for line in result.get("lines", []):
+        text = line.get("text", "").strip()
+        if not text:
+            continue
+        # bounding_box は {"x", "y", "width", "height"} (ピクセル単位)
+        bb = line.get("bounding_box", {})
+        y_rel = bb.get("y", 0) / img_h if img_h else 0.0
+        h_rel = bb.get("height", img_h) / img_h if img_h else 1.0
+        lines.append({"text": text, "y": y_rel, "h": h_rel})
+
+    return lines
+
+
+def ocr_image_with_boxes(image, settings) -> list[dict]:
+    """
+    OneOCR が有効なとき行ごとの位置情報付きでテキストを返す。
+    戻り値: [{"text": str, "y": float, "h": float}, ...]
+    OneOCR 無効/失敗時は ocr_image の結果を位置情報なしで返す。
+    """
+    if settings.get("use_oneocr", False):
+        try:
+            lines = _ocr_oneocr(image, settings)
+            if lines:
+                return lines
+        except (ImportError, FileNotFoundError) as e:
+            print(f"【OneOCR セットアップエラー】:\n{e}")
+        except Exception as e:
+            print(f"【OneOCR エラー】: {e}")
+    # フォールバック: 位置情報なし
+    text = ocr_image(image, settings)
+    return [{"text": text, "y": 0.0, "h": 1.0}]
 
 
 # ─────────────────────────────────────────────
@@ -714,6 +814,7 @@ class RegionOverlay(tk.Toplevel):
         self._on_ja_to_en    = on_ja_to_en
         self._enabled        = True
         self._text           = ""
+        self._lines          = []     # OneOCR の行位置情報
         self._drag_start     = None   # 右クリックドラッグ用
         self._on_sync_drag   = on_sync_drag
 
@@ -784,73 +885,90 @@ class RegionOverlay(tk.Toplevel):
         ff      = self._settings.get("font_family", "Yu Gothic UI")
         base_fs = int(self._settings.get("font_size", 13))
         wrap_w  = max(10, self.win_w - 8)
+        lines   = getattr(self, "_lines", [])
 
-        # まず base_fs で描画して高さを確認し、
-        # 余裕があれば拡大、はみ出していれば縮小する
-        fs = base_fs
-        tid = None
+        if lines:
+            # ── 行位置合わせモード（OneOCR の位置情報を使う）────────────
+            trans_lines = [l for l in self._text.split("\n") if l.strip()]
+            for i, ocr_line in enumerate(lines):
+                if i >= len(trans_lines):
+                    break
+                t    = trans_lines[i]
+                y_px = int(ocr_line["y"] * self.win_h)
+                h_px = max(12, int(ocr_line["h"] * self.win_h))
+                # フォントサイズを行の高さに合わせる（上限 base_fs * 2）
+                fs   = max(8, min(base_fs * 2, int(h_px * 0.75)))
+                tid  = c.create_text(
+                    4, y_px,
+                    text=t, fill=self._fg,
+                    font=(ff, fs), anchor="nw",
+                    width=wrap_w,
+                )
+                c.update_idletasks()
+                bbox = c.bbox(tid)
+                if bbox:
+                    c.create_rectangle(
+                        bbox[0]-2, bbox[1]-2, bbox[2]+2, bbox[3]+2,
+                        fill=self._bg, outline="", tags="bg_rect",
+                    )
+                    c.tag_lower("bg_rect", tid)
+        else:
+            # ── 通常モード（位置情報なし）────────────────────────────────
+            fs  = base_fs
+            tid = None
 
-        # 1回目の描画で余裕を確認して拡大を試みる
-        if tid is not None:
-            c.delete(tid)
-        tid = c.create_text(
-            4, 4, text=self._text, fill=self._fg,
-            font=(ff, fs), anchor="nw", width=wrap_w,
-        )
-        c.update_idletasks()
-        bbox = c.bbox(tid)
-        if bbox is not None:
-            text_h = bbox[3] - bbox[1]
-            avail_h = self.win_h - 8
-            if text_h < avail_h * 0.6:
-                # 余裕が40%以上あれば拡大を試みる（上限は base_fs * 3）
-                ratio = (avail_h / text_h) ** 0.5
-                fs = min(int(base_fs * 3), int(fs * ratio))
-                c.delete(tid)
-                tid = None
-
-        for _ in range(10):
-            if tid is not None:
-                c.delete(tid)
+            # 余裕があれば拡大を試みる
             tid = c.create_text(
-                4, 4,
-                text=self._text,
-                fill=self._fg,
-                font=(ff, fs),
-                anchor="nw",
-                width=wrap_w,
+                4, 4, text=self._text, fill=self._fg,
+                font=(ff, fs), anchor="nw", width=wrap_w,
             )
             c.update_idletasks()
             bbox = c.bbox(tid)
-            if bbox is None:
-                break
-            # 実際の描画高さが枠に収まっていれば終了
-            if bbox[3] - bbox[1] <= self.win_h - 8:
-                break
-            # はみ出している場合はフォントを縮小して再試行
-            new_fs = max(8, int(fs * 0.85))
-            if new_fs == fs:
-                break  # これ以上縮小できない
-            fs = new_fs
+            if bbox is not None:
+                text_h  = bbox[3] - bbox[1]
+                avail_h = self.win_h - 8
+                if text_h < avail_h * 0.6:
+                    ratio = (avail_h / text_h) ** 0.5
+                    fs    = min(int(base_fs * 3), int(fs * ratio))
+                    c.delete(tid)
+                    tid   = None
 
-        # テキスト範囲だけ背景矩形を重ねる
-        c.update_idletasks()
-        bbox = c.bbox(tid)
-        if bbox:
-            c.create_rectangle(
-                bbox[0] - 2, bbox[1] - 2,
-                bbox[2] + 2, bbox[3] + 2,
-                fill=self._bg, outline="", tags="bg_rect",
-            )
-            c.tag_lower("bg_rect", tid)
+            # はみ出す場合は縮小
+            for _ in range(10):
+                if tid is not None:
+                    c.delete(tid)
+                tid = c.create_text(
+                    4, 4, text=self._text, fill=self._fg,
+                    font=(ff, fs), anchor="nw", width=wrap_w,
+                )
+                c.update_idletasks()
+                bbox = c.bbox(tid)
+                if bbox is None:
+                    break
+                if bbox[3] - bbox[1] <= self.win_h - 8 or fs <= 8:
+                    break
+                new_fs = max(8, int(fs * 0.85))
+                if new_fs == fs:
+                    break
+                fs = new_fs
+
+            c.update_idletasks()
+            bbox = c.bbox(tid)
+            if bbox:
+                c.create_rectangle(
+                    bbox[0]-2, bbox[1]-2, bbox[2]+2, bbox[3]+2,
+                    fill=self._bg, outline="", tags="bg_rect",
+                )
+                c.tag_lower("bg_rect", tid)
 
     # ── 公開 API ──────────────────────────────────────────────
 
-    def set_text(self, text: str):
-        """翻訳結果テキストをセットして再描画する。"""
-        # 句点で改行を挿入して読みやすくする
+    def set_text(self, text: str, lines: list | None = None):
         formatted = _insert_linebreaks(text)
-        self._text = formatted
+        self._text  = formatted
+        # 行位置合わせは翻訳元と翻訳先の行数が一致する場合のみ有効
+        # 英語→日本語では行数が変わるため常に通常モードを使う
+        self._lines = []
         self._redraw()
 
     def set_status(self, msg: str):
@@ -1269,11 +1387,38 @@ class SettingsDialog(tk.Toplevel):
                   relief="flat", font=("Yu Gothic UI", 10, "bold"),
                   cursor="hand2", padx=16, pady=5,
                   command=self._save).pack(side="right", padx=(6,0))
+        # 隠し機能: OneOCR チェックボックス（キャンセルの左隣・通常は文字が見えない）
+        self._oneocr_var = tk.BooleanVar(
+            value=bool(self._settings.get("use_oneocr", False)))
+        self._vars["use_oneocr"] = self._oneocr_var
+        oneocr_cb = tk.Checkbutton(
+            bf, text="OneOCR",
+            variable=self._oneocr_var,
+            bg="#0D1117", fg="#0D1117",          # 通常時は背景と同色で見えない
+            selectcolor="#0D1117",
+            activebackground="#0D1117",
+            activeforeground="#58A6FF",
+            font=("Yu Gothic UI", 9), bd=0,
+            highlightthickness=0, cursor="hand2",
+        )
+
+        def _on_enter(e):
+            # ホバー時に薄く浮かび上がる
+            oneocr_cb.configure(fg="#6E7681", selectcolor="#21262D")
+        def _on_leave(e):
+            # マウスが離れたら再び非表示
+            oneocr_cb.configure(fg="#0D1117", selectcolor="#0D1117")
+        oneocr_cb.bind("<Enter>", _on_enter)
+        oneocr_cb.bind("<Leave>", _on_leave)
+
         tk.Button(bf, text="キャンセル",
                   bg="#21262D", fg="#8B949E",
                   relief="flat", font=("Yu Gothic UI", 10),
                   cursor="hand2", padx=10, pady=5,
                   command=self.destroy).pack(side="right")
+                  
+        # キャンセルの後にpackすることで左隣に配置される
+        oneocr_cb.pack(side="right", padx=(0, 6))
 
     def _toggle_colors(self, enabled: bool):
         st = "normal" if enabled else "disabled"
@@ -1933,9 +2078,10 @@ class LocalLensTranslatorApp(tk.Tk):
                 if self._settings.get("use_image_colors", True):
                     bg_color, fg_color = extract_dominant_colors(img_original)
 
-                # 3. OCR
+                # 3. OCR（OneOCR 有効時は行位置情報も取得）
                 self.after(0, lambda: ov.set_status("テキスト認識中..."))
-                text = ocr_image(img_original, self._settings).strip()
+                ocr_lines = ocr_image_with_boxes(img_original, self._settings)
+                text = "\n".join(l["text"] for l in ocr_lines).strip()
                 text = _fix_ocr_errors(text, self._settings.get("source_lang", "en"))
                 # OCR補正辞書を適用
                 corrections = self._settings.get("ocr_corrections", "")
@@ -1957,10 +2103,12 @@ class LocalLensTranslatorApp(tk.Tk):
 
                 # 5. 色・テキスト・表示を1つのコールバックにまとめる
                 #    （apply_image_colors → set_text → set_enabled の順を保証）
-                def show_result(t=translated, b=bg_color, f=fg_color):
+                def show_result(t=translated, b=bg_color, f=fg_color,
+                                ol=ocr_lines):
                     if b is not None:
                         ov.apply_image_colors(b, f)  # _bg/_fg を更新
-                    ov.set_text(t)                   # _redraw（色反映済み）
+                    # OneOCR 有効時は行位置情報を渡して位置合わせ表示
+                    ov.set_text(t, lines=ol)         # _redraw（色反映済み）
                     ov.set_enabled(True)             # deiconify
                     # 日→英モードのときはクリップボードにもコピー
                     if self._settings.get("source_lang", "en") == "ja":
