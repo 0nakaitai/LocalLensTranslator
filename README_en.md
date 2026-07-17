@@ -87,6 +87,7 @@ python main.py
 | ▶ Translate All | Retranslate all active regions |
 | ⏸ ON/OFF | Toggle translation display on/off for all regions |
 | ✕ Clear All | Remove all translation regions |
+| 🎯 Popup Translation | Pick a cursor reference position → immediately drag to register the popup-translation size |
 | ⚙ | Open the settings dialog |
 | Region List | Shows the coordinates and status of all translation regions |
 | OCR Correction Dictionary | Enter correction rules for common OCR misreads |
@@ -101,6 +102,27 @@ python main.py
 |--------|----------|
 | Right-click | Show menu (Retranslate / JA→EN & Copy / ☒ Move & Retranslate / Delete / ON-OFF) |
 | Right-click + Drag | Move the overlay (retranslates at new position if Move & Retranslate is ON) |
+
+---
+
+## Popup Translation
+
+For translating text with no fixed position — like in-game tooltips that only appear while hovering — where you can't pre-place a region.
+
+1. Hover the cursor over the tooltip you want to translate
+2. Press the shortcut key (default `Ctrl+Shift+P`)
+3. A translation region is auto-generated at the cursor position using the registered fixed size, and translates immediately
+4. It disappears automatically after a set number of seconds (default 6s)
+
+You can also configure it from the **"🎯 Popup Translation"** button on the main window: it opens a picker for the cursor reference position, and choosing one immediately starts a drag to register the size.
+
+| Cursor reference position | Description |
+|---|---|
+| Center | Expands the box centered on the cursor |
+| Top / Bottom / Left / Right | Expands the box from the cursor in that direction (centered on the other axis) |
+| Top-right / Top-left / Bottom-right / Bottom-left | Expands the box diagonally, with the cursor at that corner |
+
+The fixed size, reference position, and auto-close duration can also be changed under **⚙ Settings → Popup Translation**.
 
 ---
 
@@ -150,6 +172,9 @@ Saving a dictionary per game makes it easy to reuse. You can also share the text
 | Use Translation Prompt | Uncheck to ignore the prompt field entirely |
 | Font / Font Size | Display font for translation results |
 | Shortcut Keys | Global hotkey assignments (click ✕ to clear) |
+| Popup Translation: Reference Position | Which direction the box expands from the cursor (9 options) |
+| Popup Translation: Fixed Size | Set via the "Drag to Register Size" button (drag-select on screen) |
+| Popup Translation: Auto-close Seconds | Seconds before an auto-generated region disappears (default 6s) |
 | Background Opacity | Overlay transparency (10%–100%) |
 | Color Mode | Auto-extract from image / manually specify background and text colors |
 
@@ -185,6 +210,7 @@ Forces a game window into borderless fullscreen — useful for games that only s
 | `Ctrl+Shift+R` | ▶ Retranslate all regions |
 | `Ctrl+Shift+T` |⏸ Toggle translation ON/OFF |
 | `Ctrl+Shift+C` | ✕ Clear all regions |
+| `Ctrl+Shift+P` | 🎯 Popup Translation |
 
 Shortcuts can be changed in the settings dialog.
 

@@ -56,6 +56,11 @@ DEFAULT_SETTINGS = {
     "custom_src":          "en",    # カスタム翻訳の翻訳元
     "custom_tgt":          "ja",    # カスタム翻訳の翻訳先
     "use_oneocr":          False,   # OneOCR を使用するか（隠し機能）
+    "shortcut_popup":       "ctrl+shift+p",  # ポップアップ翻訳トリガー
+    "popup_ref_position":   "center",        # カーソル基準位置
+    "popup_w":              320,             # ポップアップ翻訳枠 固定幅(px)
+    "popup_h":              140,             # ポップアップ翻訳枠 固定高さ(px)
+    "popup_auto_close_sec": 6,               # 自動生成した枠を消すまでの秒数
 }
 
 # 翻訳元言語の定義
@@ -630,6 +635,88 @@ def event_to_shortcut(event) -> str:
 
 
 # ─────────────────────────────────────────────
+# ポップアップ翻訳（カーソル基準ホットキートリガー）
+# ─────────────────────────────────────────────
+
+# カーソル位置を矩形のどの基準点として扱うか
+# (ax, ay): ax=矩形の幅のうちカーソルより左側にある割合 / ay=高さのうちカーソルより上側にある割合
+POPUP_ANCHORS = {
+    "center":       (0.5, 0.5),
+    "top":          (0.5, 1.0),
+    "bottom":       (0.5, 0.0),
+    "left":         (1.0, 0.5),
+    "right":        (0.0, 0.5),
+    "top_right":    (0.0, 1.0),
+    "top_left":     (1.0, 1.0),
+    "bottom_right": (0.0, 0.0),
+    "bottom_left":  (1.0, 0.0),
+}
+
+POPUP_ANCHOR_LABELS = {
+    "top_left": "左上", "top": "上", "top_right": "右上",
+    "left":     "左",  "center": "中心", "right": "右",
+    "bottom_left": "左下", "bottom": "下", "bottom_right": "右下",
+}
+
+
+def get_cursor_pos() -> tuple[int, int] | None:
+    """ctypes 経由でスクリーン絶対座標のカーソル位置を取得する。
+    取得できない場合（Windows 以外での実行やAPI失敗）は None を返す。"""
+    try:
+        import ctypes
+
+        class _POINT(ctypes.Structure):
+            _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+        pt = _POINT()
+        if not ctypes.windll.user32.GetCursorPos(ctypes.byref(pt)):
+            return None
+        return pt.x, pt.y
+    except Exception:
+        return None
+
+
+def get_virtual_screen_rect() -> tuple[int, int, int, int]:
+    """仮想デスクトップ全体の (x, y, width, height) を返す。
+    取得できない場合は (0, 0, 0, 0)（呼び出し側で無補正にフォールバック）。"""
+    try:
+        import ctypes
+        SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN = 76, 77
+        SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN = 78, 79
+        vx = ctypes.windll.user32.GetSystemMetrics(SM_XVIRTUALSCREEN)
+        vy = ctypes.windll.user32.GetSystemMetrics(SM_YVIRTUALSCREEN)
+        vw = ctypes.windll.user32.GetSystemMetrics(SM_CXVIRTUALSCREEN)
+        vh = ctypes.windll.user32.GetSystemMetrics(SM_CYVIRTUALSCREEN)
+        return vx, vy, vw, vh
+    except Exception:
+        return 0, 0, 0, 0
+
+
+def compute_popup_rect(cx: int, cy: int, settings: dict) -> tuple[int, int, int, int]:
+    """カーソル座標・基準位置・固定サイズから翻訳枠の矩形 (x1,y1,x2,y2) を算出。
+    仮想デスクトップ範囲外にはみ出す場合は範囲内に収まるようシフトする
+    （マルチディスプレイの負座標にも対応）。"""
+    w = int(settings.get("popup_w", DEFAULT_SETTINGS["popup_w"]))
+    h = int(settings.get("popup_h", DEFAULT_SETTINGS["popup_h"]))
+    pos = settings.get("popup_ref_position", DEFAULT_SETTINGS["popup_ref_position"])
+    ax, ay = POPUP_ANCHORS.get(pos, (0.5, 0.5))
+
+    x1 = int(cx - w * ax)
+    y1 = int(cy - h * ay)
+    x2 = x1 + w
+    y2 = y1 + h
+
+    vx, vy, vw, vh = get_virtual_screen_rect()
+    if vw > 0 and vh > 0:
+        if x1 < vx:      x1, x2 = vx, vx + w
+        if y1 < vy:      y1, y2 = vy, vy + h
+        if x2 > vx + vw: x2, x1 = vx + vw, vx + vw - w
+        if y2 > vy + vh: y2, y1 = vy + vh, vy + vh - h
+
+    return x1, y1, x2, y2
+
+
+# ─────────────────────────────────────────────
 # ShortcutEntry
 # ─────────────────────────────────────────────
 
@@ -1056,7 +1143,11 @@ class RegionOverlay(tk.Toplevel):
         
     def _remove(self):
         self._on_remove(self._id)
-        self.destroy()
+        # 右クリックメニュー終了直後に destroy() すると、メニューが
+        # あった位置の再描画が間に合わず白い矩形が残ることがあるため、
+        # 先に隠してから少し遅らせて破棄する。
+        self.withdraw()
+        self.after(50, self.destroy)
 
 # ── 右クリックドラッグ（移動）──────────────────────────────
     def _on_rclick_press(self, event):
@@ -1220,33 +1311,43 @@ class SettingsDialog(tk.Toplevel):
         self._vars[key] = v
         return v
 
-    def _section(self, text):
-        f = tk.Frame(self, bg="#161B22", pady=3)
+    def _section(self, text, col=None):
+        col = col if col is not None else self._col1
+        f = tk.Frame(col, bg="#161B22", pady=3)
         f.pack(fill="x", padx=12, pady=(12, 0))
         tk.Label(f, text=text, bg="#161B22", fg="#58A6FF",
-                 font=("Consolas", 10, "bold")).pack(side="left", padx=8)
+                 font=("Consolas", 11, "bold")).pack(side="left", padx=8)
 
-    def _card(self):
-        f = tk.Frame(self, bg="#161B22", pady=5)
+    def _card(self, col=None):
+        col = col if col is not None else self._col1
+        f = tk.Frame(col, bg="#161B22", pady=5)
         f.pack(fill="x", padx=12, pady=2)
         f.columnconfigure(1, weight=1)
         return f
 
     def _lbl(self, p, text, row=0):
         tk.Label(p, text=text, bg="#161B22", fg="#8B949E",
-                 font=("Yu Gothic UI", 10), anchor="w"
+                 font=("Yu Gothic UI", 11), anchor="w"
                  ).grid(row=row, column=0, sticky="w", padx=(12,6), pady=4)
 
     def _ent(self, p, var, width=36, row=0):
         e = tk.Entry(p, textvariable=var,
                      bg="#21262D", fg="#C9D1D9",
                      insertbackground="#C9D1D9",
-                     relief="flat", font=("Yu Gothic UI", 10), width=width)
+                     relief="flat", font=("Yu Gothic UI", 11), width=width)
         e.grid(row=row, column=1, sticky="ew", padx=(0,12), pady=4)
         return e
 
     def _build_ui(self):
         s = self._settings
+
+        # ── 2カラムレイアウト ──
+        outer = tk.Frame(self, bg="#0D1117")
+        outer.pack(fill="both", expand=True)
+        self._col1 = tk.Frame(outer, bg="#0D1117")
+        self._col1.pack(side="left", fill="both", expand=True, anchor="n")
+        self._col2 = tk.Frame(outer, bg="#0D1117")
+        self._col2.pack(side="left", fill="both", expand=True, anchor="n")
 
         # ── LM Studio ──
         self._section("LM Studio 接続設定")
@@ -1259,7 +1360,7 @@ class SettingsDialog(tk.Toplevel):
         mv = self._sv("model")
         self._ent(c, mv, width=28)
         tk.Button(c, text="取得", bg="#21262D", fg="#58A6FF",
-                  relief="flat", font=("Yu Gothic UI", 9), cursor="hand2",
+                  relief="flat", font=("Yu Gothic UI", 10), cursor="hand2",
                   command=lambda: self._fetch_models(mv)
                   ).grid(row=0, column=2, padx=(0,12), pady=4)
 
@@ -1269,7 +1370,7 @@ class SettingsDialog(tk.Toplevel):
         self._prompt = tk.Text(
             c, bg="#21262D", fg="#C9D1D9",
             insertbackground="#C9D1D9",
-            relief="flat", font=("Yu Gothic UI", 10),
+            relief="flat", font=("Yu Gothic UI", 11),
             width=46, height=7, wrap="word",
         )
         self._prompt.insert("1.0", s.get("prompt_template",
@@ -1277,7 +1378,7 @@ class SettingsDialog(tk.Toplevel):
         self._prompt.grid(row=0, column=0, columnspan=3,
                           padx=12, pady=4, sticky="ew")
         tk.Label(c, text="system プロンプトの末尾に追加されます",
-                 bg="#161B22", fg="#6E7681", font=("Yu Gothic UI", 9)
+                 bg="#161B22", fg="#6E7681", font=("Yu Gothic UI", 10)
                  ).grid(row=1, column=0, columnspan=3, sticky="w", padx=12)
         use_prompt_v = tk.BooleanVar(value=bool(s.get("use_prompt", True)))
         self._vars["use_prompt"] = use_prompt_v
@@ -1285,7 +1386,7 @@ class SettingsDialog(tk.Toplevel):
                        variable=use_prompt_v,
                        bg="#161B22", fg="#C9D1D9", selectcolor="#21262D",
                        activebackground="#161B22", activeforeground="#58A6FF",
-                       font=("Yu Gothic UI", 10)
+                       font=("Yu Gothic UI", 11)
                        ).grid(row=2, column=0, columnspan=3, sticky="w", padx=12, pady=(0,4))
         c.columnconfigure(0, weight=1)
 
@@ -1301,10 +1402,10 @@ class SettingsDialog(tk.Toplevel):
         fe = tk.Entry(inner, textvariable=fv,
                       bg="#21262D", fg="#C9D1D9",
                       insertbackground="#C9D1D9",
-                      relief="flat", font=("Yu Gothic UI", 10), width=26)
+                      relief="flat", font=("Yu Gothic UI", 11), width=26)
         fe.grid(row=0, column=0, sticky="ew")
         tk.Button(inner, text="選択", bg="#21262D", fg="#58A6FF",
-                  relief="flat", font=("Yu Gothic UI", 9), cursor="hand2",
+                  relief="flat", font=("Yu Gothic UI", 10), cursor="hand2",
                   command=lambda: self._pick_font(fv)
                   ).grid(row=0, column=1, padx=(4,0))
         self._font_preview = tk.Label(
@@ -1319,18 +1420,68 @@ class SettingsDialog(tk.Toplevel):
         self._ent(c2, self._sv("font_size"), width=6)
 
         # ── ショートカット ──
-        self._section("ショートカットキー")
+        self._section("ショートカットキー", col=self._col2)
         for key, label in [
             ("shortcut_add_region",  "＋ 枠を追加"),
             ("shortcut_retranslate", "▶ 全枠翻訳"),
             ("shortcut_toggle",      "⏸ ON/OFF"),
             ("shortcut_clear",       "✕ 全枠クリア"),
+            ("shortcut_popup",       "🎯 ポップアップ翻訳"),
         ]:
-            c = self._card()
+            c = self._card(col=self._col2)
             self._lbl(c, label)
             ShortcutEntry(c, self._sv(key)).grid(
                 row=0, column=1, columnspan=2,
                 sticky="w", padx=(0,12), pady=4)
+
+        # ── ポップアップ翻訳 ──
+        self._section("ポップアップ翻訳（カーソル基準）", col=self._col2)
+
+        c = self._card(col=self._col2)
+        self._lbl(c, "カーソル基準位置")
+        pos_frame = tk.Frame(c, bg="#161B22")
+        pos_frame.grid(row=0, column=1, columnspan=2, sticky="w", padx=(0,12), pady=4)
+        pos_v = self._sv("popup_ref_position")
+        for r, row_keys in enumerate([
+            ("top_left", "top", "top_right"),
+            ("left", "center", "right"),
+            ("bottom_left", "bottom", "bottom_right"),
+        ]):
+            for gc, k in enumerate(row_keys):
+                tk.Radiobutton(
+                    pos_frame, text=POPUP_ANCHOR_LABELS[k],
+                    variable=pos_v, value=k, indicatoron=0,
+                    width=4, bg="#21262D", fg="#C9D1D9",
+                    selectcolor="#1F6FEB", activebackground="#30363D",
+                    activeforeground="#FFFFFF",
+                    font=("Yu Gothic UI", 10), relief="flat",
+                    highlightthickness=0, cursor="hand2",
+                ).grid(row=r, column=gc, padx=1, pady=1)
+
+        c = self._card(col=self._col2)
+        self._lbl(c, "固定サイズ")
+        size_frame = tk.Frame(c, bg="#161B22")
+        size_frame.grid(row=0, column=1, columnspan=2, sticky="w", padx=(0,12), pady=4)
+        self._vars["popup_w"] = tk.IntVar(
+            value=int(self._settings.get("popup_w", DEFAULT_SETTINGS["popup_w"])))
+        self._vars["popup_h"] = tk.IntVar(
+            value=int(self._settings.get("popup_h", DEFAULT_SETTINGS["popup_h"])))
+        self._popup_size_lbl = tk.Label(
+            size_frame,
+            text=f"{self._vars['popup_w'].get()} × {self._vars['popup_h'].get()} px",
+            bg="#161B22", fg="#C9D1D9", font=("Consolas", 11))
+        self._popup_size_lbl.pack(side="left", padx=(0,10))
+        tk.Button(
+            size_frame, text="ドラッグしてサイズ登録",
+            bg="#21262D", fg="#58A6FF", relief="flat",
+            font=("Yu Gothic UI", 10), cursor="hand2",
+            activebackground="#30363D", activeforeground="#58A6FF",
+            command=self._register_popup_size,
+        ).pack(side="left")
+
+        c = self._card(col=self._col2)
+        self._lbl(c, "自動で消えるまでの秒数")
+        self._ent(c, self._sv("popup_auto_close_sec"), width=6)
 
         # ── オーバーレイ ──
         self._section("オーバーレイ表示")
@@ -1343,7 +1494,7 @@ class SettingsDialog(tk.Toplevel):
                    padx=(0,12), pady=4)
         pct = tk.Label(inner, text=f"{int(alpha_val.get()*100)}%",
                        bg="#161B22", fg="#C9D1D9",
-                       font=("Consolas", 10), width=5)
+                       font=("Consolas", 11), width=5)
         pct.pack(side="right")
         tk.Scale(inner, from_=0.10, to=1.00, resolution=0.01,
                  orient="horizontal", variable=alpha_val,
@@ -1363,7 +1514,7 @@ class SettingsDialog(tk.Toplevel):
         for val, txt in [(True,"画像から自動抽出"), (False,"手動で指定")]:
             tk.Radiobutton(inner, text=txt, variable=uiv, value=val,
                            bg="#161B22", fg="#C9D1D9", selectcolor="#21262D",
-                           font=("Yu Gothic UI", 10),
+                           font=("Yu Gothic UI", 11),
                            command=lambda: self._toggle_colors(not uiv.get()),
                            ).pack(anchor="w")
 
@@ -1379,12 +1530,12 @@ class SettingsDialog(tk.Toplevel):
         bf.pack(fill="x", padx=12, pady=12)
         tk.Button(bf, text="接続テスト",
                   bg="#21262D", fg="#58A6FF",
-                  relief="flat", font=("Yu Gothic UI", 10),
+                  relief="flat", font=("Yu Gothic UI", 11),
                   cursor="hand2", padx=10, pady=5,
                   command=self._test_conn).pack(side="left")
         tk.Button(bf, text="保存",
                   bg="#238636", fg="#FFFFFF",
-                  relief="flat", font=("Yu Gothic UI", 10, "bold"),
+                  relief="flat", font=("Yu Gothic UI", 11, "bold"),
                   cursor="hand2", padx=16, pady=5,
                   command=self._save).pack(side="right", padx=(6,0))
         # 隠し機能: OneOCR チェックボックス（キャンセルの左隣・通常は文字が見えない）
@@ -1398,7 +1549,7 @@ class SettingsDialog(tk.Toplevel):
             selectcolor="#0D1117",
             activebackground="#0D1117",
             activeforeground="#58A6FF",
-            font=("Yu Gothic UI", 9), bd=0,
+            font=("Yu Gothic UI", 10), bd=0,
             highlightthickness=0, cursor="hand2",
         )
 
@@ -1413,7 +1564,7 @@ class SettingsDialog(tk.Toplevel):
 
         tk.Button(bf, text="キャンセル",
                   bg="#21262D", fg="#8B949E",
-                  relief="flat", font=("Yu Gothic UI", 10),
+                  relief="flat", font=("Yu Gothic UI", 11),
                   cursor="hand2", padx=10, pady=5,
                   command=self.destroy).pack(side="right")
                   
@@ -1440,18 +1591,18 @@ class SettingsDialog(tk.Toplevel):
         tk.Entry(popup, textvariable=sv,
                  bg="#21262D", fg="#C9D1D9",
                  insertbackground="#C9D1D9",
-                 relief="flat", font=("Yu Gothic UI", 10)
+                 relief="flat", font=("Yu Gothic UI", 11)
                  ).pack(fill="x", padx=8, pady=(8,2))
         tk.Label(popup, text="フォント名で絞り込み",
                  bg="#161B22", fg="#6E7681",
-                 font=("Yu Gothic UI", 8)).pack(anchor="w", padx=10)
+                 font=("Yu Gothic UI", 9)).pack(anchor="w", padx=10)
         lf = tk.Frame(popup, bg="#161B22")
         lf.pack(fill="both", expand=True, padx=8, pady=4)
         sb = tk.Scrollbar(lf, bg="#21262D")
         sb.pack(side="right", fill="y")
         lb = tk.Listbox(lf, bg="#21262D", fg="#C9D1D9",
                         selectbackground="#1F6FEB",
-                        relief="flat", font=("Yu Gothic UI", 10),
+                        relief="flat", font=("Yu Gothic UI", 11),
                         yscrollcommand=sb.set, activestyle="none")
         lb.pack(side="left", fill="both", expand=True)
         sb.configure(command=lb.yview)
@@ -1490,7 +1641,7 @@ class SettingsDialog(tk.Toplevel):
         lb.bind("<Double-Button-1>", lambda _: confirm())
         tk.Button(popup, text="このフォントを使用",
                   bg="#238636", fg="white",
-                  relief="flat", font=("Yu Gothic UI", 10),
+                  relief="flat", font=("Yu Gothic UI", 11),
                   cursor="hand2", pady=5,
                   command=confirm).pack(fill="x", padx=8, pady=(4,8))
 
@@ -1508,7 +1659,7 @@ class SettingsDialog(tk.Toplevel):
         popup.grab_set()
         lb = tk.Listbox(popup, bg="#21262D", fg="#C9D1D9",
                         selectbackground="#1F6FEB",
-                        relief="flat", font=("Yu Gothic UI", 10),
+                        relief="flat", font=("Yu Gothic UI", 11),
                         width=52, height=min(len(models), 10))
         lb.pack(padx=8, pady=8)
         for m in models:
@@ -1519,7 +1670,7 @@ class SettingsDialog(tk.Toplevel):
             popup.destroy()
         lb.bind("<Double-Button-1>", lambda _: select())
         tk.Button(popup, text="選択", bg="#238636", fg="white",
-                  relief="flat", font=("Yu Gothic UI", 10),
+                  relief="flat", font=("Yu Gothic UI", 11),
                   command=select).pack(pady=(0,8))
 
     def _test_conn(self):
@@ -1546,10 +1697,28 @@ class SettingsDialog(tk.Toplevel):
                 except: val = 0.92
             elif key == "use_image_colors":
                 val = bool(val)
+            elif key == "popup_auto_close_sec":
+                try:    val = float(val)
+                except: val = DEFAULT_SETTINGS["popup_auto_close_sec"]
             new_s[key] = val
         new_s["prompt_template"] = self._prompt.get("1.0", "end-1c")
         self._on_save(new_s)
         self.destroy()
+
+    def _register_popup_size(self):
+        """「ドラッグしてサイズ登録」ボタン。
+        RegionSelector を絶対座標は使わずサイズ登録専用として呼び出す。"""
+        self.grab_release()
+        self.withdraw()
+        self.after(300, lambda: RegionSelector(self.master, self._on_popup_size_selected))
+
+    def _on_popup_size_selected(self, x1, y1, x2, y2):
+        w, h = abs(x2 - x1), abs(y2 - y1)
+        self._vars["popup_w"].set(w)
+        self._vars["popup_h"].set(h)
+        self._popup_size_lbl.configure(text=f"{w} × {h} px")
+        self.deiconify()
+        self.grab_set()
 
 
 # ─────────────────────────────────────────────
@@ -1629,6 +1798,8 @@ class LocalLensTranslatorApp(tk.Tk):
         btn(r1, "▶ 全枠を翻訳", self._translate_all).pack(side="left", padx=3)
         btn(r1, "⏸ ON/OFF",      self._toggle).pack(side="left", padx=3)
         btn(r1, "✕ 全枠クリア", self._clear_all).pack(side="left", padx=3)
+        self._popup_pos_btn = btn(r1, "🎯 ポップアップ翻訳", self._open_popup_position_picker)
+        self._popup_pos_btn.pack(side="left", padx=3)
 
         # 右端に⚙ボタンを追加
         tk.Button(r1, text="⚙", command=self._open_settings,
@@ -1644,8 +1815,8 @@ class LocalLensTranslatorApp(tk.Tk):
         # ── 3段目（リストボックス ＋ OCR補正辞書） ──
         mid = tk.Frame(self, bg="#0D1117")
         mid.pack(fill="both", expand=True, padx=10, pady=(0, 4))
-        mid.columnconfigure(0, weight=3)
-        mid.columnconfigure(1, weight=2)
+        mid.columnconfigure(0, weight=2)
+        mid.columnconfigure(1, weight=3)
 
         # 左: 翻訳枠一覧
         lf = tk.Frame(mid, bg="#0D1117")
@@ -1656,7 +1827,7 @@ class LocalLensTranslatorApp(tk.Tk):
         self._lb = tk.Listbox(lf, bg="#161B22", fg="#C9D1D9",
                               selectbackground="#1F6FEB",
                               relief="flat", font=("Consolas", 9),
-                              height=8, width=24, borderwidth=0)
+                              height=8, width=17, borderwidth=0)
         self._lb.pack(fill="both", expand=True)
 
         # 右: OCR補正辞書
@@ -1692,7 +1863,7 @@ class LocalLensTranslatorApp(tk.Tk):
             rf, bg="#161B22", fg="#C9D1D9",
             insertbackground="#C9D1D9",
             relief="flat", font=("Consolas", 9),
-            height=8, width=22,
+            height=8, width=29,
             wrap="none",
         )
         self._corrections_text.insert(
@@ -1765,20 +1936,17 @@ class LocalLensTranslatorApp(tk.Tk):
                  bg="#0D1117", fg="#6E7681",
                  font=("Yu Gothic UI", 8)).pack(side="left", padx=(8, 0))    
 
-        # ── 5段目（ステータスバー） ──
+        # ── 5段目（ステータスバー：ショートカット表示のみ） ──
         sb = tk.Frame(self, bg="#161B22", pady=3)
         sb.pack(fill="x")
-        self._sv = tk.StringVar(value="準備完了")
-        tk.Label(sb, textvariable=self._sv,
-                 bg="#161B22", fg="#8B949E",
-                 font=("Yu Gothic UI", 9), anchor="w").pack(side="left", padx=10)
-        
-        self._scl = tk.Label(sb, text=self._sc_hint(),
-                             bg="#161B22", fg="#6E7681",
-                             font=("Consolas", 8))
-        self._scl.pack(side="right", padx=10)
+        self._sv = tk.StringVar(value="準備完了")  # 内部の set_status() 互換用（非表示）
 
-        self.geometry("560x360")
+        self._scl = tk.Label(sb, text=self._sc_hint(),
+                             bg="#161B22", fg="#8B949E",
+                             font=("Consolas", 9), anchor="w")
+        self._scl.pack(side="left", padx=10, fill="x", expand=True)
+
+        self.geometry("640x360")
 
     # ── ウィンドウ操作 ──
 
@@ -1910,10 +2078,11 @@ class LocalLensTranslatorApp(tk.Tk):
                 
     def _sc_hint(self):
         s = self._settings
-        return (f"ON/OFF:{s['shortcut_toggle']}  "
-                f"枠追加:{s['shortcut_add_region']}  "
-                f"再翻訳:{s['shortcut_retranslate']}  "
-                f"クリア:{s['shortcut_clear']}")
+        return (f"⏸{s['shortcut_toggle']}  "
+                f"＋{s['shortcut_add_region']}  "
+                f"▶{s['shortcut_retranslate']}  "
+                f"✕{s['shortcut_clear']}  "
+                f"🎯{s.get('shortcut_popup', '')}")
 
     def _bind_shortcuts(self):
         """
@@ -1943,6 +2112,7 @@ class LocalLensTranslatorApp(tk.Tk):
             ("shortcut_add_region",  self._add_region),
             ("shortcut_clear",       self._clear_all),
             ("shortcut_retranslate", self._translate_all_active),
+            ("shortcut_popup",       self._popup_translate),
         ]
 
         try:
@@ -1980,6 +2150,15 @@ class LocalLensTranslatorApp(tk.Tk):
     def _on_selected(self, x1: int, y1: int, x2: int, y2: int):
         """RegionSelector から呼ばれる。x1〜y2 はスクリーン絶対座標。"""
         self.deiconify()
+        self._create_region(x1, y1, x2, y2)
+
+    def _create_region(self, x1: int, y1: int, x2: int, y2: int,
+                        auto_close_sec: float | None = None) -> int:
+        """指定座標に翻訳枠を作成する共通処理。
+        _on_selected（手動のドラッグ選択）と _popup_translate（カーソル基準の
+        ポップアップ翻訳）の両方から呼ばれる。
+        auto_close_sec を指定すると、その秒数後に自動で枠を削除する
+        （ポップアップ翻訳専用。手動追加の枠には使わない）。"""
         rid = self._next_id
         self._next_id += 1
         ov = RegionOverlay(
@@ -1995,6 +2174,83 @@ class LocalLensTranslatorApp(tk.Tk):
         self.set_status(f"枠 {rid} を追加（計 {len(self._regions)} 枠）")
         if self._trans_on:
             self._translate_region(rid)
+        if auto_close_sec:
+            def _auto_close():
+                if rid in self._regions:   # 手動で既に削除済みなら何もしない
+                    ov._remove()
+            self.after(int(auto_close_sec * 1000), _auto_close)
+        return rid
+
+    def _popup_translate(self):
+        """ポップアップ翻訳ホットキー（既定 Ctrl+Shift+P）。
+        カーソル位置に固定サイズの翻訳枠を生成して即翻訳し、一定時間後に自動で消す。
+        メインウィンドウは操作しない（iconify/deiconifyしない）ため、
+        ゲーム側からフォーカスを奪わずに実行できる。"""
+        pos = get_cursor_pos()
+        if pos is None:
+            self.set_status("⚠ カーソル座標を取得できませんでした")
+            return
+        cx, cy = pos
+        x1, y1, x2, y2 = compute_popup_rect(cx, cy, self._settings)
+        sec = float(self._settings.get(
+            "popup_auto_close_sec", DEFAULT_SETTINGS["popup_auto_close_sec"]))
+        self._create_region(x1, y1, x2, y2, auto_close_sec=sec)
+
+    def _open_popup_position_picker(self):
+        """メイン画面「🎯 基準位置」ボタン。3x3の基準位置グリッドを
+        ポップオーバー表示し、選択すると即座にドラッグでのサイズ登録
+        （RegionSelector）を起動する。"""
+        popup = tk.Toplevel(self)
+        popup.overrideredirect(True)
+        popup.attributes("-topmost", True)
+        popup.configure(bg="#21262D")
+
+        bx = self._popup_pos_btn.winfo_rootx()
+        by = self._popup_pos_btn.winfo_rooty() + self._popup_pos_btn.winfo_height()
+        popup.geometry(f"+{bx}+{by}")
+
+        grid = tk.Frame(popup, bg="#21262D")
+        grid.pack(padx=4, pady=4)
+        cur = self._settings.get("popup_ref_position",
+                                  DEFAULT_SETTINGS["popup_ref_position"])
+        for r, row_keys in enumerate([
+            ("top_left", "top", "top_right"),
+            ("left", "center", "right"),
+            ("bottom_left", "bottom", "bottom_right"),
+        ]):
+            for c, k in enumerate(row_keys):
+                is_cur = (k == cur)
+                tk.Button(
+                    grid, text=POPUP_ANCHOR_LABELS[k], width=4,
+                    bg="#1F6FEB" if is_cur else "#161B22",
+                    fg="#FFFFFF" if is_cur else "#C9D1D9",
+                    relief="flat", font=("Yu Gothic UI", 9), cursor="hand2",
+                    activebackground="#1F6FEB", activeforeground="#FFFFFF",
+                    command=lambda k=k: self._on_popup_position_picked(popup, k),
+                ).grid(row=r, column=c, padx=1, pady=1)
+
+        popup.bind("<FocusOut>",
+                   lambda e: popup.destroy() if popup.winfo_exists() else None)
+        popup.focus_set()
+
+    def _on_popup_position_picked(self, popup: tk.Toplevel, pos: str):
+        if popup.winfo_exists():
+            popup.destroy()
+        self._settings["popup_ref_position"] = pos
+        save_settings(self._settings)
+        self.set_status(
+            f"基準位置: {POPUP_ANCHOR_LABELS.get(pos, pos)} → "
+            f"ドラッグでサイズを登録してください")
+        self.iconify()
+        self.after(300, lambda: RegionSelector(self, self._on_popup_size_selected_main))
+
+    def _on_popup_size_selected_main(self, x1: int, y1: int, x2: int, y2: int):
+        w, h = abs(x2 - x1), abs(y2 - y1)
+        self._settings["popup_w"] = w
+        self._settings["popup_h"] = h
+        save_settings(self._settings)
+        self.deiconify()
+        self.set_status(f"ポップアップ翻訳サイズを {w}×{h}px に登録しました")
 
     def _retranslate_region(self, rid):
         """右クリック「再翻訳」から呼ばれる。_translate_region に委譲。"""
