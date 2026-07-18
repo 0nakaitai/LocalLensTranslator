@@ -11,7 +11,7 @@
 A Windows desktop tool that reads multiple screen regions via OCR and displays real-time translations as overlays using a local LLM.
 
 <img width="256" height="256" alt="Image" src="https://github.com/user-attachments/assets/e2994e7a-b7c6-4292-94f6-5120fcfff2bd" />
-<img width="565" height="394" alt="Image" src="https://github.com/user-attachments/assets/b82e4180-b1e3-4387-8017-0a0aa1bfa958" />
+<img width="643" height="394" alt="Image" src="https://github.com/user-attachments/assets/1fbbe7e4-8700-4b59-8d72-3a8cd9cec802" />
 
 ---
 
