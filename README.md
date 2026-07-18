@@ -9,7 +9,8 @@
 </table>
 
 画面上の任意の**複数**範囲をOCRで読み取り、  
-ローカルLLMを使ってリアルタイム翻訳を**オーバーレイ**するWindowsデスクトップツールです。
+ローカルLLMを使ってリアルタイム翻訳を**オーバーレイ**するWindowsデスクトップツールです。  
+## DeepL / Gemini / Groq のAPIキーに対応しました！
 
 <img width="256" height="256" alt="Image" src="https://github.com/user-attachments/assets/e2994e7a-b7c6-4292-94f6-5120fcfff2bd" />
 <img width="643" height="394" alt="Image" src="https://github.com/user-attachments/assets/1fbbe7e4-8700-4b59-8d72-3a8cd9cec802" />
