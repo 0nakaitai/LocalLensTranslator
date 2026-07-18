@@ -16,6 +16,10 @@ import re
 import sys  # ← これを追加
 import colorsys
 
+# urllib のデフォルト User-Agent（Python-urllib/x.y）は Cloudflare 等の
+# ボット判定に弾かれやすいため、外部APIへのリクエストは全てこれを付与する。
+USER_AGENT = "LocalLensTranslator/1.0"
+
 def resource_path(relative_path):
     """ PyInstallerの一時フォルダ、または通常のパスからファイルを探す """
     try:
@@ -36,6 +40,12 @@ SETTINGS_PATH = os.path.join(
 
 DEFAULT_SETTINGS = {
     "lm_studio_url":       "http://127.0.0.1:1234/v1",
+    "translate_engine":    "llm",       # "llm" / "deepl" / "gemini" / "groq"
+    "deepl_api_key":       "",          # DeepL APIキー（末尾:fxがあれば無料版として自動判定）
+    "gemini_api_key":      "",
+    "gemini_model":        "gemini-3.1-flash-lite",
+    "groq_api_key":        "",
+    "groq_model":          "llama-3.3-70b-versatile",
     "model":               "",
     "prompt_template":     "",
     "font_family":         "Yu Gothic UI",
@@ -124,7 +134,12 @@ def load_settings() -> dict:
     if os.path.exists(SETTINGS_PATH):
         try:
             with open(SETTINGS_PATH, encoding="utf-8") as f:
-                return {**DEFAULT_SETTINGS, **json.load(f)}
+                raw = json.load(f)
+            s = {**DEFAULT_SETTINGS, **raw}
+            # 旧バージョンの use_deepl (bool) からの移行
+            if "translate_engine" not in raw and raw.get("use_deepl"):
+                s["translate_engine"] = "deepl"
+            return s
         except Exception:
             pass
     return dict(DEFAULT_SETTINGS)
@@ -510,9 +525,14 @@ def _apply_ocr_corrections(text: str, corrections_str: str) -> str:
     return text
 
 
-def lm_translate(text: str, settings: dict, force_lang: str | None = None) -> str:
-    base_url = settings["lm_studio_url"].rstrip("/")
-    url = f"{base_url}/chat/completions"
+def _openai_compatible_translate(
+    text: str, settings: dict, force_lang: str | None,
+    base_url: str, model: str, api_key: str | None,
+    service_name: str, connect_hint: str = "",
+) -> str:
+    """OpenAI互換の chat/completions を叩く共通処理。
+    lm_translate / gemini_translate / groq_translate はこれの薄いラッパー。"""
+    url = f"{base_url.rstrip('/')}/chat/completions"
 
     lang = force_lang if force_lang else settings.get("source_lang", "en")
 
@@ -527,17 +547,11 @@ def lm_translate(text: str, settings: dict, force_lang: str | None = None) -> st
     # 翻訳プロンプトは system ではなく assistant ロールで挟む
     messages = [{"role": "system", "content": system_msg}]
 
-    # ★修正点1：カスタムモード時も、追加指示（プロンプト）をassistantとして読み込ませるように条件を変更
     if settings.get("use_prompt", True):
         custom = settings.get("prompt_template", "").strip()
         if custom and custom != DEFAULT_SETTINGS["prompt_template"]:
             messages.append({"role": "assistant", "content": f"[Additional instructions]\n{custom}"})
-            
-    LANG_NAMES_EN = {
-        "ja": "Japanese", "en": "English", "zh": "Chinese",
-        "ko": "Korean", "fr": "French", "de": "German",
-        "es": "Spanish", "ru": "Russian", "pt": "Portuguese",
-    }
+
     targets = {
         "ja": "English",
         "en": "Japanese",
@@ -546,11 +560,10 @@ def lm_translate(text: str, settings: dict, force_lang: str | None = None) -> st
         "custom": CUSTOM_LANGS.get(settings.get("custom_tgt", "ja"), "Japanese"),
     }
     target = targets.get(lang, "Japanese")
-    
+
     if lang in ("ja", "en", "zh", "ko"):
         user_content = f"Translate the following text into {target}:\n<translate>\n{text}\n</translate>"
     else:
-        # ★修正点2：カスタムモードでも、OCRテキストを確実に送信し、かつ記号で囲んで境界を明確にする
         user_content = f"Translate the following text:\n<translate>\n{text}\n</translate>"
 
     messages.append({"role": "user", "content": user_content})
@@ -561,16 +574,15 @@ def lm_translate(text: str, settings: dict, force_lang: str | None = None) -> st
         "max_tokens": 2048,
         "stream": False,
     }
-    model = settings.get("model", "").strip()
     if model:
         payload["model"] = model
 
+    headers = {"Content-Type": "application/json", "User-Agent": USER_AGENT}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
     data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        url, data=data,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
+    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=60) as resp:
             body = json.loads(resp.read().decode("utf-8"))
@@ -581,21 +593,122 @@ def lm_translate(text: str, settings: dict, force_lang: str | None = None) -> st
             # <translate>タグの除去はすべての言語で行う
             result = re.sub(r'</?translate>\s*', '', result).strip()
             return result
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", errors="ignore")
+        raise RuntimeError(f"{service_name} API エラー ({e.code})\n{detail}")
     except urllib.error.URLError as e:
         raise RuntimeError(
-            f"LM Studio に接続できません。\n"
+            f"{service_name} に接続できません。\n"
             f"URL: {url}\n"
-            f"LM Studio を起動してローカルサーバーをONにしてください。\n"
-            f"詳細: {e}"
+            f"{connect_hint}詳細: {e}"
         )
     except (KeyError, IndexError) as e:
-        raise RuntimeError(f"LM Studio のレスポンス形式が予期しない形式です: {e}")
+        raise RuntimeError(f"{service_name} のレスポンス形式が予期しない形式です: {e}")
+
+
+def lm_translate(text: str, settings: dict, force_lang: str | None = None) -> str:
+    base_url = settings["lm_studio_url"].rstrip("/")
+    model = settings.get("model", "").strip()
+    return _openai_compatible_translate(
+        text, settings, force_lang, base_url, model, None, "LM Studio",
+        connect_hint="LM Studio を起動してローカルサーバーをONにしてください。\n")
+
+
+# ─────────────────────────────────────────────
+# DeepL
+# ─────────────────────────────────────────────
+
+DEEPL_TARGET_LANG = {
+    "ja": "EN-US",   # 日→英
+    "en": "JA",       # 英語→日
+    "zh": "JA",       # 中国語→日
+    "ko": "JA",       # 韓国語→日
+}
+DEEPL_LANG_CODE = {
+    "ja": "JA", "en": "EN-US", "zh": "ZH", "ko": "KO",
+    "fr": "FR", "de": "DE", "es": "ES", "ru": "RU", "pt": "PT-BR",
+}
+
+
+def deepl_translate(text: str, settings: dict, force_lang: str | None = None) -> str:
+    """DeepL API を使った翻訳。lm_translate と同じシグネチャのドロップイン代替。
+    ソース言語は DeepL の自動検出に任せ、翻訳先のみ指定するシンプルな実装。"""
+    api_key = settings.get("deepl_api_key", "").strip()
+    if not api_key:
+        raise RuntimeError("DeepL APIキーが設定されていません（⚙設定で入力してください）")
+
+    lang = force_lang if force_lang else settings.get("source_lang", "en")
+    if lang == "custom":
+        target_lang = DEEPL_LANG_CODE.get(settings.get("custom_tgt", "ja"), "JA")
+    else:
+        target_lang = DEEPL_TARGET_LANG.get(lang, "JA")
+
+    base_url = ("https://api-free.deepl.com/v2/translate" if api_key.endswith(":fx")
+                else "https://api.deepl.com/v2/translate")
+
+    data = json.dumps({"text": [text], "target_lang": target_lang}).encode("utf-8")
+    req = urllib.request.Request(
+        base_url, data=data,
+        headers={"Content-Type": "application/json", "User-Agent": USER_AGENT,
+                 "Authorization": f"DeepL-Auth-Key {api_key}"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+            return body["translations"][0]["text"].strip()
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", errors="ignore")
+        raise RuntimeError(f"DeepL API エラー ({e.code})\n{detail}")
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"DeepL に接続できません。\n詳細: {e}")
+    except (KeyError, IndexError) as e:
+        raise RuntimeError(f"DeepL のレスポンス形式が予期しない形式です: {e}")
+
+
+# ─────────────────────────────────────────────
+# Gemini / Groq（どちらも OpenAI 互換エンドポイント）
+# ─────────────────────────────────────────────
+
+def gemini_translate(text: str, settings: dict, force_lang: str | None = None) -> str:
+    api_key = settings.get("gemini_api_key", "").strip()
+    if not api_key:
+        raise RuntimeError("Gemini APIキーが設定されていません（⚙設定で入力してください）")
+    model = settings.get("gemini_model", "").strip() or DEFAULT_SETTINGS["gemini_model"]
+    return _openai_compatible_translate(
+        text, settings, force_lang,
+        "https://generativelanguage.googleapis.com/v1beta/openai",
+        model, api_key, "Gemini")
+
+
+def groq_translate(text: str, settings: dict, force_lang: str | None = None) -> str:
+    api_key = settings.get("groq_api_key", "").strip()
+    if not api_key:
+        raise RuntimeError("Groq APIキーが設定されていません（⚙設定で入力してください）")
+    model = settings.get("groq_model", "").strip() or DEFAULT_SETTINGS["groq_model"]
+    return _openai_compatible_translate(
+        text, settings, force_lang,
+        "https://api.groq.com/openai/v1",
+        model, api_key, "Groq")
+
+
+def translate_text(text: str, settings: dict, force_lang: str | None = None) -> str:
+    """設定の translate_engine に応じて振り分ける（呼び出し側はエンジンを意識しない）。"""
+    engine = settings.get("translate_engine", "llm")
+    if engine == "deepl":
+        return deepl_translate(text, settings, force_lang)
+    if engine == "gemini":
+        return gemini_translate(text, settings, force_lang)
+    if engine == "groq":
+        return groq_translate(text, settings, force_lang)
+    return lm_translate(text, settings, force_lang)
 
 
 def fetch_lm_models(base_url: str) -> list[str]:
     url = base_url.rstrip("/") + "/models"
     try:
-        with urllib.request.urlopen(url, timeout=5) as resp:
+        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+        with urllib.request.urlopen(req, timeout=5) as resp:
             body = json.loads(resp.read().decode("utf-8"))
             return [m["id"] for m in body.get("data", [])]
     except Exception:
@@ -937,7 +1050,7 @@ class RegionOverlay(tk.Toplevel):
             bg="#21262D", fg="#C9D1D9", activebackground="#1F6FEB",
         )
         self._menu.add_command(label="再翻訳",
-                               command=lambda: self._on_retranslate(self._id))
+                               command=self._on_retranslate_click)
         self._menu.add_command(label="日→英翻訳してコピー",
                                command=self._do_ja_to_en)
         self._menu.add_separator()
@@ -1104,6 +1217,12 @@ class RegionOverlay(tk.Toplevel):
         self._redraw()
 
     def toggle_active(self):
+        self._menu.unpost()
+        # unpost() 呼び出し直後はまだ画面上の再描画が終わっていないことがある
+        # （Windowsのメニュー消去が非同期のため）。実処理は少し遅らせて呼ぶ。
+        self.after(80, self._toggle_active_impl)
+
+    def _toggle_active_impl(self):
         self._enabled = not self._enabled
         if self._enabled:
             self.deiconify()
@@ -1128,13 +1247,25 @@ class RegionOverlay(tk.Toplevel):
     @property
     def region(self) -> tuple[int, int, int, int]:
         return self._x1, self._y1, self._x2, self._y2
-        
+
+    def _on_retranslate_click(self):
+        """右クリック「再翻訳」。unpost() 直後はメニューの消去描画が
+        間に合っていないことがあり、そのままキャプチャするとメニューの
+        文字までOCRされてしまう。実際の再翻訳呼び出しは少し遅らせる。"""
+        self._menu.unpost()
+        self.after(80, lambda: self._on_retranslate(self._id))
+
     def _do_ja_to_en(self):
         """右クリック「日→英翻訳してコピー」"""
+        self._menu.unpost()
+        self.after(80, self._do_ja_to_en_impl)
+
+    def _do_ja_to_en_impl(self):
         if self._on_ja_to_en:
             self._on_ja_to_en(self._id)
-            
+
     def _toggle_drag_retranslate(self):
+        self._menu.unpost()
         val = self._drag_retrans_var.get()
         self._settings["drag_retranslate"] = val
         # メインUIのチェックボックスを同期
@@ -1142,10 +1273,16 @@ class RegionOverlay(tk.Toplevel):
             self._on_sync_drag(val)         
         
     def _remove(self):
+        self._menu.unpost()
+        # 削除は再翻訳と違って体感速度が問題にならないため、
+        # 他の項目より長めに待ってから withdraw/destroy する。
+        self.after(200, self._do_remove)
+
+    def _do_remove(self):
         self._on_remove(self._id)
-        # 右クリックメニュー終了直後に destroy() すると、メニューが
-        # あった位置の再描画が間に合わず白い矩形が残ることがあるため、
-        # 先に隠してから少し遅らせて破棄する。
+        # 遅延実行後さらに withdraw → destroy の2段階にすることで、
+        # メニューが表示されていた位置の再描画とオーバーレイ消去が
+        # 重ならないようにする。
         self.withdraw()
         self.after(50, self.destroy)
 
@@ -1317,6 +1454,7 @@ class SettingsDialog(tk.Toplevel):
         f.pack(fill="x", padx=12, pady=(12, 0))
         tk.Label(f, text=text, bg="#161B22", fg="#58A6FF",
                  font=("Consolas", 11, "bold")).pack(side="left", padx=8)
+        return f
 
     def _card(self, col=None):
         col = col if col is not None else self._col1
@@ -1349,13 +1487,47 @@ class SettingsDialog(tk.Toplevel):
         self._col2 = tk.Frame(outer, bg="#0D1117")
         self._col2.pack(side="left", fill="both", expand=True, anchor="n")
 
-        # ── LM Studio ──
-        self._section("LM Studio 接続設定")
+        # ── 翻訳エンジン ──
+        self._section("翻訳エンジン")
         c = self._card()
+        engine_v = tk.StringVar(value=s.get("translate_engine", "llm"))
+        self._vars["translate_engine"] = engine_v
+
+        tabs = tk.Frame(c, bg="#161B22")
+        tabs.grid(row=0, column=0, columnspan=3, sticky="w", padx=12, pady=4)
+        self._engine_tabs = {}
+        for key, label in [("llm", "ローカルLLM"), ("deepl", "DeepL"),
+                            ("gemini", "Gemini"), ("groq", "Groq")]:
+            b = tk.Button(
+                tabs, text=label, width=10, relief="flat", cursor="hand2",
+                font=("Yu Gothic UI", 10), command=lambda k=key: self._select_engine(k))
+            b.pack(side="left", padx=(0,3))
+            self._engine_tabs[key] = b
+
+        # タブ切替でウィンドウ高さが変わらないよう、高さ固定のコンテナに
+        # 全フレームを重ねて置き、表示側だけ lift() で前面に出す。
+        engine_box = tk.Frame(self._col1, bg="#0D1117", height=130)
+        engine_box.pack(fill="x")
+        engine_box.pack_propagate(False)
+
+        self._llm_fields = tk.Frame(engine_box, bg="#0D1117")
+        self._llm_fields.place(x=0, y=0, relwidth=1, relheight=1)
+        self._deepl_fields = tk.Frame(engine_box, bg="#0D1117")
+        self._deepl_fields.place(x=0, y=0, relwidth=1, relheight=1)
+        self._gemini_fields = tk.Frame(engine_box, bg="#0D1117")
+        self._gemini_fields.place(x=0, y=0, relwidth=1, relheight=1)
+        self._groq_fields = tk.Frame(engine_box, bg="#0D1117")
+        self._groq_fields.place(x=0, y=0, relwidth=1, relheight=1)
+        self._engine_field_frames = {
+            "llm": self._llm_fields, "deepl": self._deepl_fields,
+            "gemini": self._gemini_fields, "groq": self._groq_fields,
+        }
+
+        self._section("LM Studio 接続設定", col=self._llm_fields)
+        c = self._card(col=self._llm_fields)
         self._lbl(c, "エンドポイントURL")
         self._ent(c, self._sv("lm_studio_url"))
-
-        c = self._card()
+        c = self._card(col=self._llm_fields)
         self._lbl(c, "モデル名")
         mv = self._sv("model")
         self._ent(c, mv, width=28)
@@ -1363,6 +1535,33 @@ class SettingsDialog(tk.Toplevel):
                   relief="flat", font=("Yu Gothic UI", 10), cursor="hand2",
                   command=lambda: self._fetch_models(mv)
                   ).grid(row=0, column=2, padx=(0,12), pady=4)
+
+        self._section("DeepL 接続設定", col=self._deepl_fields)
+        c = self._card(col=self._deepl_fields)
+        self._lbl(c, "APIキー")
+        self._ent(c, self._sv("deepl_api_key"), width=36)
+        tk.Label(c, text="翻訳プロンプトはローカルLLM選択時のみ有効です",
+                 bg="#161B22", fg="#6E7681", font=("Yu Gothic UI", 10)
+                 ).grid(row=1, column=0, columnspan=3, sticky="w", padx=12)
+
+        self._section("Gemini 接続設定", col=self._gemini_fields)
+        c = self._card(col=self._gemini_fields)
+        self._lbl(c, "APIキー")
+        self._ent(c, self._sv("gemini_api_key"), width=36)
+        c = self._card(col=self._gemini_fields)
+        self._lbl(c, "モデル名")
+        self._ent(c, self._sv("gemini_model"), width=28)
+
+        self._section("Groq 接続設定", col=self._groq_fields)
+        c = self._card(col=self._groq_fields)
+        self._lbl(c, "APIキー")
+        self._ent(c, self._sv("groq_api_key"), width=36)
+        c = self._card(col=self._groq_fields)
+        self._lbl(c, "モデル名")
+        self._ent(c, self._sv("groq_model"), width=28)
+
+        self._engine_field_frames.get(engine_v.get(), self._llm_fields).lift()
+        self._update_engine_tab_style()
 
         # ── プロンプト ──
         self._section("翻訳プロンプト")
@@ -1704,6 +1903,21 @@ class SettingsDialog(tk.Toplevel):
         new_s["prompt_template"] = self._prompt.get("1.0", "end-1c")
         self._on_save(new_s)
         self.destroy()
+
+    def _select_engine(self, engine: str):
+        """翻訳エンジンのタブ切り替え（llm/deepl/gemini/groq）。
+        全フレームは高さ固定のコンテナに重ねてあり、lift() で前面に
+        出すだけなのでウィンドウサイズは変化しない。"""
+        self._vars["translate_engine"].set(engine)
+        self._engine_field_frames.get(engine, self._llm_fields).lift()
+        self._update_engine_tab_style()
+
+    def _update_engine_tab_style(self):
+        current = self._vars["translate_engine"].get()
+        active   = {"bg": "#1F6FEB", "fg": "#FFFFFF"}
+        inactive = {"bg": "#21262D", "fg": "#8B949E"}
+        for key, btn in self._engine_tabs.items():
+            btn.configure(**(active if key == current else inactive))
 
     def _register_popup_size(self):
         """「ドラッグしてサイズ登録」ボタン。
@@ -2355,7 +2569,7 @@ class LocalLensTranslatorApp(tk.Tk):
 
                 # 4. 翻訳
                 self.after(0, lambda n=len(text): ov.set_status(f"翻訳中... ({n}文字)"))
-                translated = lm_translate(text, self._settings)
+                translated = translate_text(text, self._settings)
 
                 # 5. 色・テキスト・表示を1つのコールバックにまとめる
                 #    （apply_image_colors → set_text → set_enabled の順を保証）
@@ -2412,7 +2626,7 @@ class LocalLensTranslatorApp(tk.Tk):
                     self.after(0, no_text)
                     return
                 # 日→英翻訳（force_lang="ja"）
-                translated = lm_translate(text, self._settings, force_lang="ja")
+                translated = translate_text(text, self._settings, force_lang="ja")
                 # クリップボードにコピーして結果を表示
                 def show_en(t=translated):
                     self.clipboard_clear()

@@ -11,7 +11,7 @@
 A Windows desktop tool that reads multiple screen regions via OCR and displays real-time translations as overlays using a local LLM.
 
 <img width="256" height="256" alt="Image" src="https://github.com/user-attachments/assets/e2994e7a-b7c6-4292-94f6-5120fcfff2bd" />
-<img width="643" height="394" alt="Image" src="https://github.com/user-attachments/assets/1fbbe7e4-8700-4b59-8d72-3a8cd9cec802" />
+<img width="565" height="394" alt="Image" src="https://github.com/user-attachments/assets/b82e4180-b1e3-4387-8017-0a0aa1bfa958" />
 
 ---
 
@@ -162,13 +162,30 @@ Saving a dictionary per game makes it easy to reuse. You can also share the text
 
 ---
 
+## Translation Engine
+
+You can choose from 4 translation engines: **Local LLM** (default) / **DeepL** / **Gemini** / **Groq**. Switch between them from the "Translation Engine" tab in ⚙ Settings (only the relevant fields for the selected engine are shown).
+
+| Engine | Requires | Notes |
+|---|---|---|
+| Local LLM | LM Studio (or similar) running locally | Fully free, works offline |
+| DeepL | API key | Free tier (Developer plan) allows 1,000,000 characters total, with no monthly reset |
+| Gemini | API key | Has a free tier. Model name is configurable |
+| Groq | API key | Has a free tier. Optimized for speed |
+
+**About the Gemini model name:** The default is `gemini-3.1-flash-lite` (optimized for speed). If translation quality isn't satisfactory, switching to `gemini-3.5-flash` trades a bit of speed for better accuracy.
+
+---
+
 ## ⚙ Settings
 
 | Option | Description |
 |--------|-------------|
-| Endpoint URL | LM Studio API address (default: `http://127.0.0.1:1234/v1`) |
-| Model Name | Model to use (click "Fetch" to retrieve available models from LM Studio) |
-| Translation Prompt | Additional instructions appended to the system prompt (e.g., proper nouns, tone) |
+| Translation Engine | Switch between Local LLM / DeepL / Gemini / Groq via tabs. Only the selected engine's fields are shown |
+| Endpoint URL | (Local LLM) LM Studio API address (default: `http://127.0.0.1:1234/v1`) |
+| Model Name | (Local LLM) Model to use (click "Fetch" to retrieve available models from LM Studio) |
+| API Key / Model Name | (DeepL, Gemini, Groq) Entry fields inside each respective tab |
+| Translation Prompt | Additional instructions appended to the system prompt (Local LLM only). Handles proper nouns, tone, etc. |
 | Use Translation Prompt | Uncheck to ignore the prompt field entirely |
 | Font / Font Size | Display font for translation results |
 | Shortcut Keys | Global hotkey assignments (click ✕ to clear) |
